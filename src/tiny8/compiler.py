@@ -1536,6 +1536,36 @@ class CodeGenerator:
             else:
                 raise SyntaxError(f"Invalid lvalue for {'++' if expr.is_inc else '--'}")
 
+        elif isinstance(expr, BinaryOp) and expr.op in ("&&", "||"):
+            # C requires short-circuit evaluation: the right operand must not
+            # be evaluated when the left operand already decides the result.
+            # Emit the right operand inside a branch so its code is skipped,
+            # not merely its value discarded.
+            lbl_end = self.new_label("logic_end")
+            self.gen_expr(expr.left)
+            self.emit("CPI R16, 0")
+            if expr.op == "&&":
+                lbl_short = self.new_label("and_false")
+                self.emit(f"BREQ {lbl_short}")
+                self.gen_expr(expr.right)
+                self.emit("CPI R16, 0")
+                self.emit(f"BREQ {lbl_short}")
+                self.emit("LDI R16, 1")
+                self.emit(f"JMP {lbl_end}")
+                self.emit_label(lbl_short)
+                self.emit("LDI R16, 0")
+            else:
+                lbl_short = self.new_label("or_true")
+                self.emit(f"BRNE {lbl_short}")
+                self.gen_expr(expr.right)
+                self.emit("CPI R16, 0")
+                self.emit(f"BRNE {lbl_short}")
+                self.emit("LDI R16, 0")
+                self.emit(f"JMP {lbl_end}")
+                self.emit_label(lbl_short)
+                self.emit("LDI R16, 1")
+            self.emit_label(lbl_end)
+
         elif (
             isinstance(expr, BinaryOp)
             and expr.op in ("<<", ">>")
@@ -1603,30 +1633,6 @@ class CodeGenerator:
                 self.emit(f"{instr} R16")
                 self.emit("DEC R17")
                 self.emit(f"JMP {lbl_loop}")
-                self.emit_label(lbl_end)
-            elif expr.op == "&&":
-                lbl_false = self.new_label("and_false")
-                lbl_end = self.new_label("and_end")
-                self.emit("CPI R16, 0")
-                self.emit(f"BREQ {lbl_false}")
-                self.emit("CPI R17, 0")
-                self.emit(f"BREQ {lbl_false}")
-                self.emit("LDI R16, 1")
-                self.emit(f"JMP {lbl_end}")
-                self.emit_label(lbl_false)
-                self.emit("LDI R16, 0")
-                self.emit_label(lbl_end)
-            elif expr.op == "||":
-                lbl_true = self.new_label("or_true")
-                lbl_end = self.new_label("or_end")
-                self.emit("CPI R16, 0")
-                self.emit(f"BRNE {lbl_true}")
-                self.emit("CPI R17, 0")
-                self.emit(f"BRNE {lbl_true}")
-                self.emit("LDI R16, 0")
-                self.emit(f"JMP {lbl_end}")
-                self.emit_label(lbl_true)
-                self.emit("LDI R16, 1")
                 self.emit_label(lbl_end)
             elif expr.op in ("==", "!=", "<", "<=", ">", ">="):
                 lbl_true = self.new_label("cmp_true")

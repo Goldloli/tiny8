@@ -1800,3 +1800,88 @@ def test_compiler_standalone_vardecl_and_assign_without_frame():
     asm_text = "\n".join(gen.asm)
     assert "ST R30, R16" in asm_text
     assert "LDI R31, 6" in asm_text
+
+
+def test_short_circuit_and_skips_rhs_side_effect():
+    """`&&` must not evaluate its right operand when the left one is zero."""
+    c_code = """
+    int main() {
+        int zero = 0;
+        int one = 1;
+        int taken = 0;
+        if (zero && poke(0x80, 7)) {
+            taken = 1;
+        }
+        if (one && poke(0x81, 8)) {
+            taken = taken + 2;
+        }
+        poke(0x82, taken);
+        return 0;
+    }
+    """
+    cpu = CPU()
+    cpu.load_program(assemble(compile_c(c_code)))
+    cpu.run(max_steps=500, show_progress=False)
+
+    # poke() returns the byte it wrote, so `one && poke(...)` is true and only
+    # the second branch runs.
+    assert cpu.read_ram(0x80) == 0
+    assert cpu.read_ram(0x81) == 8
+    assert cpu.read_ram(0x82) == 2
+
+
+def test_short_circuit_or_skips_rhs_side_effect():
+    """`||` must not evaluate its right operand when the left one is non-zero."""
+    c_code = """
+    int main() {
+        int zero = 0;
+        int one = 1;
+        int taken = 0;
+        if (one || poke(0x80, 7)) {
+            taken = 1;
+        }
+        if (zero || poke(0x81, 8)) {
+            taken = taken + 2;
+        }
+        poke(0x82, taken);
+        return 0;
+    }
+    """
+    cpu = CPU()
+    cpu.load_program(assemble(compile_c(c_code)))
+    cpu.run(max_steps=500, show_progress=False)
+
+    assert cpu.read_ram(0x80) == 0
+    assert cpu.read_ram(0x81) == 8
+    assert cpu.read_ram(0x82) == 3
+
+
+def test_short_circuit_result_values():
+    """Short-circuiting must keep the boolean 0/1 result of C logical operators."""
+    c_code = """
+    int main() {
+        int a = 5;
+        int b = 0;
+        int c = 7;
+        int land = (a > 1) && (c > 2);
+        int land_short = (b != 0) && (c > 2);
+        int lor = (b != 0) || (c > 2);
+        int lor_short = (a > 1) || (c > 2);
+        int nested = (a && (b || c)) && c;
+        poke(0x80, land);
+        poke(0x81, land_short);
+        poke(0x82, lor);
+        poke(0x83, lor_short);
+        poke(0x84, nested);
+        return 0;
+    }
+    """
+    cpu = CPU()
+    cpu.load_program(assemble(compile_c(c_code)))
+    cpu.run(max_steps=1000, show_progress=False)
+
+    assert cpu.read_ram(0x80) == 1
+    assert cpu.read_ram(0x81) == 0
+    assert cpu.read_ram(0x82) == 1
+    assert cpu.read_ram(0x83) == 1
+    assert cpu.read_ram(0x84) == 1
